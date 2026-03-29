@@ -35,18 +35,23 @@ async function checkLoginStatus(page) {
         await waitFor(2000);
 
         // 检查是否有用户头像/昵称（已登录标志）
-        const loggedIn = await page.evaluate(() => {
-            // 携程首页登录后通常有 .tl_nme 或 .lg_bt_username 等元素
-            const userEl = document.querySelector('.tl_nme, .lg_bt_username, [class*="avatar"], [class*="username"]');
-            if (userEl && userEl.textContent.trim()) {
-                return { loggedIn: true, username: userEl.textContent.trim() };
+        // 使用 Puppeteer 原生获取 Cookie（这是唯一能跨越 HttpOnly 限制的方法）
+        const allCookies = await page.cookies();
+        const hasTicket = allCookies.some(c => c.name.toLowerCase().includes('ticket') || c.name === 'DUID');
+
+        // 作为双重保险，也可以查 DOM
+        const loggedInDOM = await page.evaluate(() => {
+            const userEl = document.querySelector('.tl_nme, .lg_bt_username, [class*="avatar"], [class*="username"], [class*="user"], .head-portrait');
+            if (userEl && userEl.textContent.trim() && !userEl.textContent.includes('登录') && !userEl.textContent.includes('注册')) {
+                return userEl.textContent.trim();
             }
-            // 检查 cookie 中的登录态
-            const hasCookie = document.cookie.includes('cticket') || document.cookie.includes('DUID');
-            return { loggedIn: hasCookie, username: null };
+            return null;
         });
 
-        return loggedIn;
+        if (hasTicket || loggedInDOM) {
+            return { loggedIn: true, username: loggedInDOM || 'User_Found_Via_Cookie' };
+        }
+        return { loggedIn: false, error: 'No valid HttpOnly ctickets or user profile elements found' };
     } catch (err) {
         return { loggedIn: false, error: err.message };
     }
