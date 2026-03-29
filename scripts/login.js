@@ -268,8 +268,12 @@ async function main() {
 
     } catch (err) {
         outputError(`登录失败: ${err.message}`, { stack: err.stack });
+        if (browser) await browser.disconnect();
+        process.exit(1);
     }
     // ⚠️ 不要 browser.close()
+    if (browser) await browser.disconnect();
+    process.exit(0);
 }
 
 main();
