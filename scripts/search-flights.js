@@ -81,74 +81,98 @@ function buildSearchUrl(from, to, date, cabin) {
 }
 
 // ============================================================
-//  解析航班列表
+//  解析航班列表（基于真实携程 DOM 结构 2026-03 验证）
+//
+//  DOM 层级：
+//    div.flight-item.domestic
+//      └─ div.flight-box
+//           └─ div.flight-row
+//                ├─ div.flight-airline  → 航司 + 航班号 + 机型
+//                ├─ div.flight-detail
+//                │    ├─ div.depart-box → 出发时间 + 机场
+//                │    ├─ div.arrow-box  → 经停/直飞
+//                │    └─ div.arrive-box → 到达时间 + 机场
+//                └─ div.flight-operate
+//                     └─ div.flight-price → 价格
 // ============================================================
 
 async function parseFlightList(page) {
     return await page.evaluate(() => {
         const flights = [];
-        // 携程航班列表卡片选择器（可能随版本变化，提供多种备选）
-        const cards = document.querySelectorAll(
-            '[class*="flight-item"], [class*="FlightItem"], .list-item, [class*="flight_item"]'
-        );
+        const cards = document.querySelectorAll('.flight-item');
 
         for (const card of cards) {
             try {
-                // 航司
-                const airlineEl = card.querySelector(
-                    '[class*="airline"], [class*="air-name"], [class*="carrier"]'
-                );
-                // 航班号
-                const flightNoEl = card.querySelector(
-                    '[class*="flight-no"], [class*="flightNo"], [class*="flight_number"]'
-                );
+                // 航司名称
+                const airlineEl = card.querySelector('.flight-airline .airline-name span');
+                // 航班号 + 机型（格式: "JD5907 空客A320(中)"）
+                const planeNoEl = card.querySelector('.plane-No');
                 // 出发时间
-                const depTimeEl = card.querySelector(
-                    '[class*="depart-time"], [class*="dep-time"], [class*="time"]:first-child'
-                );
+                const depTimeEl = card.querySelector('.depart-box .time');
                 // 到达时间
-                const arrTimeEl = card.querySelector(
-                    '[class*="arrive-time"], [class*="arr-time"]'
-                );
-                // 出发机场
-                const depAirportEl = card.querySelector(
-                    '[class*="depart-airport"], [class*="dep-airport"]'
-                );
-                // 到达机场
-                const arrAirportEl = card.querySelector(
-                    '[class*="arrive-airport"], [class*="arr-airport"]'
-                );
-                // 价格
-                const priceEl = card.querySelector(
-                    '[class*="price"], [class*="Price"], .price'
-                );
+                const arrTimeEl = card.querySelector('.arrive-box .time');
+                // 出发机场名
+                const depAirportNameEl = card.querySelector('.depart-box .airport .name');
+                const depTerminalEl = card.querySelector('.depart-box .airport .terminal');
+                // 到达机场名
+                const arrAirportNameEl = card.querySelector('.arrive-box .airport .name');
+                const arrTerminalEl = card.querySelector('.arrive-box .airport .terminal');
+                // 价格（<dfn>¥</dfn>430 结构）
+                const priceContainer = card.querySelector('.flight-price .price');
+                // 经停信息（arrow-box 内的 transfer-text）
+                const transferEl = card.querySelector('.arrow-box [id^="transfer-text-"]');
+                // 舱位折扣
+                const subPriceEl = card.querySelector('.sub-price-item');
+                // 标签（如"当日低价"、"宠物友好"）
+                const tagEls = card.querySelectorAll('.flight-tags .tag');
+
+                // 解析航班号和机型
+                const planeNoText = planeNoEl?.textContent?.trim() || '';
+                const flightNoMatch = planeNoText.match(/^([A-Z\d]{4,8})/);
+                const aircraftMatch = planeNoText.match(/([^\s]+\(.+?\))$/);
+
+                // 解析价格数字
+                let priceText = '';
+                if (priceContainer) {
+                    const dfn = priceContainer.querySelector('dfn');
+                    const priceNum = priceContainer.textContent?.replace(/[¥起\s]/g, '').trim();
+                    priceText = dfn ? `¥${priceNum}` : priceContainer.textContent?.trim() || '';
+                }
+
+                // 解析到达时间（可能带 "+1天" 等后缀）
+                let arriveTime = '';
+                if (arrTimeEl) {
+                    const mainTime = arrTimeEl.childNodes[0]?.textContent?.trim() || '';
+                    const dayEl = arrTimeEl.querySelector('.day');
+                    const daySuffix = dayEl?.textContent?.trim() || '';
+                    arriveTime = mainTime + (daySuffix ? ` ${daySuffix}` : '');
+                }
+
+                // 组合机场信息
+                const depAirport = (depAirportNameEl?.textContent?.trim() || '') +
+                    (depTerminalEl?.textContent?.trim() || '');
+                const arrAirport = (arrAirportNameEl?.textContent?.trim() || '') +
+                    (arrTerminalEl?.textContent?.trim() || '');
+
                 // 经停信息
-                const stopEl = card.querySelector(
-                    '[class*="stop"], [class*="transfer"]'
-                );
-                // 机型
-                const planeEl = card.querySelector(
-                    '[class*="plane"], [class*="craft"], [class*="aircraft"]'
-                );
-                // 准点率
-                const onTimeEl = card.querySelector(
-                    '[class*="on-time"], [class*="punctual"]'
-                );
+                const transferText = transferEl?.textContent?.trim() || '';
+                const stops = transferText || '直飞';
 
                 const flight = {
                     airline: airlineEl?.textContent?.trim() || '',
-                    flightNo: flightNoEl?.textContent?.trim() || '',
+                    flightNo: flightNoMatch ? flightNoMatch[1] : '',
                     departTime: depTimeEl?.textContent?.trim() || '',
-                    arriveTime: arrTimeEl?.textContent?.trim() || '',
-                    departAirport: depAirportEl?.textContent?.trim() || '',
-                    arriveAirport: arrAirportEl?.textContent?.trim() || '',
-                    price: priceEl?.textContent?.trim() || '',
-                    stops: stopEl?.textContent?.trim() || '直飞',
-                    aircraft: planeEl?.textContent?.trim() || '',
-                    onTimeRate: onTimeEl?.textContent?.trim() || '',
+                    arriveTime: arriveTime.trim(),
+                    departAirport: depAirport,
+                    arriveAirport: arrAirport,
+                    price: priceText,
+                    stops,
+                    aircraft: aircraftMatch ? aircraftMatch[1] : '',
+                    cabinDiscount: subPriceEl?.textContent?.trim() || '',
+                    tags: Array.from(tagEls).map(t => t.textContent.trim()).filter(Boolean),
                 };
 
-                // 至少有航班号或时间才算有效
+                // 至少有航班号或出发时间才算有效
                 if (flight.flightNo || flight.departTime) {
                     flights.push(flight);
                 }
@@ -162,23 +186,30 @@ async function parseFlightList(page) {
 }
 
 /**
- * 备用解析：如果结构化选择器失败，尝试从页面文本提取
+ * 备用解析：使用 innerText 按航班行分段提取
  */
 async function parseFlightListFallback(page) {
     return await page.evaluate(() => {
         const text = document.body.innerText;
-        // 检查是否有搜索结果
+        // 检查是否有"无航班"提示
         if (text.includes('没有找到') || text.includes('无航班') || text.includes('暂无')) {
             return { noResult: true, message: '未找到符合条件的航班' };
         }
-        // 返回页面原始文本的关键部分供 Agent 智能解析
+
+        // 尝试用 .flight-item 的 innerText 逐段提取
+        const items = document.querySelectorAll('.flight-item');
+        if (items.length > 0) {
+            const rawFlights = Array.from(items).map(el => el.innerText.replace(/\n+/g, ' | '));
+            return { rawLines: rawFlights.slice(0, 30) };
+        }
+
+        // 最终降级：从全页文字中提取航班相关行
         const lines = text.split('\n').filter(l => l.trim());
-        // 提取看起来像航班信息的行
         const flightLines = lines.filter(l =>
-            /\d{1,2}:\d{2}/.test(l) || // 包含时间
-            /[A-Z]{2}\d{3,4}/.test(l) || // 航班号
-            /¥/.test(l) || // 价格
-            /经停|直飞|中转/.test(l) // 经停信息
+            /\d{1,2}:\d{2}/.test(l) ||
+            /[A-Z]{2}\d{3,4}/.test(l) ||
+            /¥/.test(l) ||
+            /经停|直飞|中转/.test(l)
         );
         return { rawLines: flightLines.slice(0, 50) };
     });
@@ -229,17 +260,14 @@ async function main() {
             url: searchUrl,
         });
 
-        // 导航到搜索页
-        await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        // 导航到搜索页（使用 networkidle2 等待 AJAX 航班数据加载）
+        await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 45000 });
 
-        // 等待航班列表加载
-        await waitFor(5000);
+        // 等待航班列表渲染（React 客户端渲染需要额外时间）
+        await waitFor(8000);
 
-        // 尝试等待航班卡片出现
-        const hasCards = await waitForSelector(page,
-            '[class*="flight-item"], [class*="FlightItem"], .list-item, [class*="flight_item"]',
-            15000
-        );
+        // 等待航班卡片出现
+        const hasCards = await waitForSelector(page, '.flight-item', 15000);
 
         // 截图搜索结果
         const shotResult = await screenshot(page, 'search_result');
