@@ -7,9 +7,18 @@ dist/
 # Debug scripts
 debug-*.js
 test-*.js
+dump-*.js
+list-*.js
+inspect-*.js
 
 # Agent states
 *_cookies.json
 *_auth.json
 .auth/
 
+# Reference docs (info is in SKILL.md)
+references/
+
+# Temp / scratch
+*.tmp
+*.bak
