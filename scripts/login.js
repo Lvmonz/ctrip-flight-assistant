@@ -80,21 +80,39 @@ async function qrcodeLogin(page) {
 
     // 3. 尝试切换到扫码登录 tab
     const qrTabFound = await page.evaluate(() => {
-        // 携程登录页通常有 "扫码登录" 选项
-        const tabs = document.querySelectorAll('.tab-list li, .login-tab-item, [class*="qrcode"], [class*="scan"]');
+        const tabs = document.querySelectorAll('.tab-list li, .login-tab-item, .login-code a, [class*="qrcode"], [class*="scan"]');
         for (const tab of tabs) {
             if (tab.textContent.includes('扫码') || tab.textContent.includes('二维码')) {
                 tab.click();
                 return true;
             }
         }
+
+        // 更暴力的 fallback：直接找包含"扫码"的所有链接
+        const allLinks = document.querySelectorAll('a, div, button, span');
+        for (const el of allLinks) {
+            if (el.textContent.trim() === '扫码登录' || el.textContent.trim() === '二维码登录') {
+                el.click();
+                return true;
+            }
+        }
+
         return false;
     });
 
     await waitFor(2000);
 
-    // 4. 截图二维码
-    const shotQR = await screenshot(page, 'qrcode');
+    // 4. 截图二维码：只截取登录框部分，防止全屏截图导致微信上看不清二维码
+    let shotQR;
+    const box = await page.$('.lg_loginwrap, .login-box, .content-box');
+    if (box) {
+        const filename = `ctrip_qrcode_${Date.now()}.png`;
+        const filepath = require('path').join('/tmp', filename);
+        await box.screenshot({ path: filepath });
+        shotQR = filepath;
+    } else {
+        shotQR = await screenshot(page, 'qrcode');
+    }
 
     // 5. 立即返回二维码给 Agent，不阻塞进程
     output({
