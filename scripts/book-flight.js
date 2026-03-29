@@ -69,7 +69,7 @@ async function main() {
                 process.exit(1);
             }
             const cabinParam = (params.cabin === 'business' || params.cabin === 'first') ? 'c_f' : 'y_s_c_f';
-            const searchUrl = `https://flights.ctrip.com/online/list/oneway-${fromCode}-${toCode}?depdate=${params.date}&cabin=${cabinParam}&adult=1&child=0&infant=0`;
+            const searchUrl = `https://flights.ctrip.com/online/list/oneway-${fromCode}-${toCode}?depdate=${params.date}&cabin=${cabinParam}`;
 
             await loadCookies(page);
             output({ status: 'navigating', message: '正在导航到搜索页...' });

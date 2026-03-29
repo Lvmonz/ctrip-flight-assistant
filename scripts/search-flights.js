@@ -79,8 +79,8 @@ function parseArgs() {
 function buildSearchUrl(from, to, date, cabin) {
     let cabinParam = 'y_s_c_f';
     if (cabin === 'business' || cabin === 'first' || cabin === '商务' || cabin === '头等' || cabin === 'c_f') cabinParam = 'c_f';
-    // 携程国内航班搜索 URL 格式
-    return `https://flights.ctrip.com/online/list/oneway-${from}-${to}?depdate=${date}&cabin=${cabinParam}&adult=1&child=0&infant=0`;
+    // 携程国内航班搜索 URL 格式 (移除 adult/child/infant 参数防止触发严格风控导致无法下拉加载)
+    return `https://flights.ctrip.com/online/list/oneway-${from}-${to}?depdate=${date}&cabin=${cabinParam}`;
 }
 
 // ============================================================
@@ -223,32 +223,32 @@ async function parseFlightListFallback(page) {
 // ============================================================
 
 async function scrollToLoadAll(page) {
-    let previousCount = 0;
-    let stableRounds = 0;
-    const MAX_SCROLLS = 30;
-    const SCROLL_WAIT = 2000;
+    // 强制盲目滚动并移动鼠标，确保触发懒加载
+    // 很多现代站点网络请求耗时可能大于 2 秒，如果太早 break 会导致只看到前 15 条
+    const SCROLL_AMOUNT = 30;
 
-    for (let i = 0; i < MAX_SCROLLS; i++) {
-        const currentCount = await page.evaluate(() =>
-            document.querySelectorAll('.flight-item').length
-        );
+    // 把鼠标移动到安全区域（左上角），防止停留在悬浮栏或广告上拦截滚动事件
+    await page.mouse.move(150, 200);
+    // 必须点击一次，确保页面在容器中获得焦点，否则 wheel 事件会被浏览器忽略！
+    await page.mouse.click(150, 200);
 
-        if (currentCount === previousCount) {
-            stableRounds++;
-            if (stableRounds >= 2) break; // 连续 2 次无新增，认为已全部加载
-        } else {
-            stableRounds = 0;
-        }
-        previousCount = currentCount;
-
-        // 滚动到页面底部
-        await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-        await waitFor(SCROLL_WAIT);
+    for (let i = 0; i < SCROLL_AMOUNT; i++) {
+        await page.mouse.wheel({ deltaY: 500 });
+        // 加入轻微抖动防止反爬虫判断
+        await page.mouse.move(100 + Math.random() * 100, 100 + Math.random() * 100);
+        await waitFor(500); // 每次滚动后稍等
     }
+
+    // 给最后一次懒加载多留一点时间渲染
+    await waitFor(3000);
+
+    const currentCount = await page.evaluate(() =>
+        document.querySelectorAll('.flight-item').length
+    );
 
     // 滚回顶部
     await page.evaluate(() => window.scrollTo(0, 0));
-    return previousCount;
+    return currentCount;
 }
 
 // ============================================================
