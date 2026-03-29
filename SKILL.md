@@ -132,11 +132,11 @@ cd /home/node/.openclaw/skills/ctrip-flight && node scripts/login.js --check
 
 1. 运行展开报价脚本:
    ```bash
-   cd /home/node/.openclaw/skills/ctrip-flight && node scripts/expand-prices.js --flightNo MU5148
+   cd /home/node/.openclaw/skills/ctrip-flight && node scripts/expand-prices.js --from 杭州 --to 北京 --date 2026-03-30 --flightNo MU5148
    ```
    或按序号：
    ```bash
-   cd /home/node/.openclaw/skills/ctrip-flight && node scripts/expand-prices.js --index 0
+   cd /home/node/.openclaw/skills/ctrip-flight && node scripts/expand-prices.js --from 杭州 --to 北京 --date 2026-03-30 --index 0
    ```
 2. 解析返回的服务选项列表，向用户展示：
    - 舱位等级、折扣
