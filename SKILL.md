@@ -57,11 +57,18 @@ cd /home/node/.openclaw/skills/ctrip-flight && node scripts/login.js --phone 138
 
 **步骤**:
 
-1. 从用户消息中提取: 出发城市、到达城市、出发日期
-2. **【极其重要约束】** 在运行搜索脚本前，如果用户缺少 `出发城市`、`到达城市`、`出发日期` 中的**任何一个**，**绝对禁止直接调用搜索工具**！你必须停下来，用 `notify_user` 告诉用户还需要补充什么信息！绝不能自己伪造或猜测日期！
-3. 运行搜索脚本:
+1. 从用户消息中提取需要的信息。
+2. **【极其重要且致命的约束】** 在调用搜索脚本前，你必须向用户**逐一或一次性严格确认**以下全部参数！如果用户没有提到，**绝对禁止直接调用搜索脚本**！必须停下手头动作，使用 `notify_user` 询问用户缺失的偏好！绝不能自己伪造或猜测！
+   - 👉 **出发城市** (如: 北京)
+   - 👉 **到达城市** (如: 上海)
+   - 👉 **出发日期** (如: 2026-05-01)
+   - 👉 **什么舱位** (头等舱 / 商务舱 / 经济舱)
+   - 👉 **起终点机场偏好** (如果你知道该城市有多个机场如北京首都/大兴，上海浦东/虹桥，需询问偏好。如果用户回答“无所谓”，则参数传“无所谓”)
+   - 👉 **起飞时间偏好** (早上 / 中午 / 晚上 / 无所谓)
+   - 👉 **是否偏好大飞机** (是 / 否)
+3. 待用户补充完整所有上述信息后，运行增强版搜索脚本:
    ```bash
-   cd /home/node/.openclaw/skills/ctrip-flight && node scripts/search-flights.js --from 出发城市 --to 到达城市 --date YYYY-MM-DD
+   cd /home/node/.openclaw/skills/ctrip-flight && node scripts/search-flights.js --from 出发城市 --to 到达城市 --date YYYY-MM-DD --cabin 舱位(economic/business/first) --time "早上|中午|晚上|无所谓" --airport "某机场名|无所谓" --largeOnly "true|false"
    ```
 4. 解析输出 JSON，将航班信息格式化后回复用户
 5. 如果用户要求仅看直飞，加 `--direct` 参数

@@ -60,6 +60,9 @@ function parseArgs() {
             case '--date': params.date = args[++i]; break;
             case '--cabin': params.cabin = args[++i]; break;
             case '--direct': params.direct = true; break;
+            case '--time': params.time = args[++i]; break;
+            case '--airport': params.airport = args[++i]; break;
+            case '--largeOnly': params.largeOnly = args[++i] === 'true'; break;
         }
     }
 
@@ -70,9 +73,11 @@ function parseArgs() {
 //  构造携程搜索 URL
 // ============================================================
 
-function buildSearchUrl(from, to, date) {
+function buildSearchUrl(from, to, date, cabin) {
+    let cabinParam = 'y_s_c_f';
+    if (cabin === 'business' || cabin === 'first' || cabin === '商务' || cabin === '头等' || cabin === 'c_f') cabinParam = 'c_f';
     // 携程国内航班搜索 URL 格式
-    return `https://flights.ctrip.com/online/list/oneway-${from}-${to}?depdate=${date}&cabin=y_s_c_f&adult=1&child=0&infant=0`;
+    return `https://flights.ctrip.com/online/list/oneway-${from}-${to}?depdate=${date}&cabin=${cabinParam}&adult=1&child=0&infant=0`;
 }
 
 // ============================================================
@@ -216,7 +221,7 @@ async function main() {
         await loadCookies(page);
 
         // 构造搜索 URL
-        const searchUrl = buildSearchUrl(fromCode, toCode, params.date);
+        const searchUrl = buildSearchUrl(fromCode, toCode, params.date, params.cabin);
 
         output({
             status: 'searching',
@@ -269,10 +274,30 @@ async function main() {
             return;
         }
 
-        // 过滤直飞
+        // 自定义条件过滤
         let resultFlights = flights;
         if (params.direct) {
-            resultFlights = flights.filter(f => f.stops === '直飞' || !f.stops);
+            resultFlights = resultFlights.filter(f => f.stops === '直飞' || !f.stops);
+        }
+        if (params.time && params.time !== '无所谓') {
+            resultFlights = resultFlights.filter(f => {
+                if (!f.departTime) return true;
+                const hour = parseInt(f.departTime.split(':')[0], 10);
+                if (params.time.includes('早') && hour < 12) return true;
+                if (params.time.includes('中') && hour >= 10 && hour <= 15) return true;
+                if (params.time.includes('晚') && hour > 15) return true;
+                return false;
+            });
+        }
+        if (params.airport && params.airport !== '无所谓') {
+            resultFlights = resultFlights.filter(f =>
+                (f.departAirport && f.departAirport.includes(params.airport)) ||
+                (f.arriveAirport && f.arriveAirport.includes(params.airport))
+            );
+        }
+        if (params.largeOnly) {
+            const largeAircraftRegex = /330|350|777|787|747|380/i;
+            resultFlights = resultFlights.filter(f => f.aircraft && largeAircraftRegex.test(f.aircraft));
         }
 
         // 更新 Cookie（搜索后可能有新的 session cookie）
@@ -286,6 +311,9 @@ async function main() {
                 to: `${params.to}(${toCode})`,
                 date: params.date,
                 cabin: params.cabin,
+                time: params.time || '不限',
+                airport: params.airport || '不限',
+                largeOnly: params.largeOnly || false,
                 directOnly: params.direct,
             },
             totalFlights: resultFlights.length,
