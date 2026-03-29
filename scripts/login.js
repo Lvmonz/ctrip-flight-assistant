@@ -185,6 +185,9 @@ async function main() {
         const page = await getPage(browser);
 
         if (mode === '--check') {
+            // 给扫码后网页自行处理跨域 SSO 握手留一点时间，防止刚扫完就被立即的 goto 强制打断
+            await waitFor(4000);
+
             // 首先直接检查当前浏览器页面原生状态 (不覆盖 Cookie)
             let status = await checkLoginStatus(page);
             if (status.loggedIn) {
