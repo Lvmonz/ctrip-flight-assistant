@@ -91,59 +91,42 @@ async function tryRestoreSession(page) {
 //  扫码登录
 // ============================================================
 
-async function qrcodeLogin(page) {
-    // 1. 打开登录页
-    await page.goto(CTRIP_LOGIN, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await waitFor(2000);
+async function qrcodeLogin() {
+    const fs = require('fs');
+    const { spawn } = require('child_process');
+    const path = require('path');
 
-    // 2. 截图当前状态
-    const shotBefore = await screenshot(page, 'login_page');
-
-    // 3. 尝试切换到扫码登录 tab
-    const qrTabFound = await page.evaluate(() => {
-        const tabs = document.querySelectorAll('.tab-list li, .login-tab-item, .login-code a, [class*="qrcode"], [class*="scan"]');
-        for (const tab of tabs) {
-            if (tab.textContent.includes('扫码') || tab.textContent.includes('二维码')) {
-                tab.click();
-                return true;
-            }
-        }
-
-        // 更暴力的 fallback：直接找包含"扫码"的所有链接
-        const allLinks = document.querySelectorAll('a, div, button, span');
-        for (const el of allLinks) {
-            if (el.textContent.trim() === '扫码登录' || el.textContent.trim() === '二维码登录') {
-                el.click();
-                return true;
-            }
-        }
-
-        return false;
-    });
-
-    await waitFor(2000);
-
-    // 4. 截图二维码：只截取登录框部分，防止全屏截图导致微信上看不清二维码
-    let shotQR;
-    const box = await page.$('.lg_loginwrap, .login-box, .content-box');
-    if (box) {
-        const filename = `ctrip_qrcode_${Date.now()}.png`;
-        const filepath = require('path').join('/tmp', filename);
-        await box.screenshot({ path: filepath });
-        shotQR = filepath;
-    } else {
-        shotQR = await screenshot(page, 'qrcode');
+    // Clean up old marker
+    if (fs.existsSync('/tmp/ctrip_qr_ready.txt')) {
+        fs.unlinkSync('/tmp/ctrip_qr_ready.txt');
     }
 
-    // 5. 立即返回二维码给 Agent，不阻塞进程
-    output({
-        success: true,
-        status: 'waiting_scan',
-        message: '请把此二维码发给用户，要求用户用携程 APP 扫码。',
-        hint: '【极其重要】收到此状态后，必须立刻用 notify_user 工具把二维码发送给用户！等用户回复“扫好了”之后，再执行 node scripts/login.js --check',
-        qrcode_screenshot: shotQR,
-        login_page_screenshot: shotBefore,
-    });
+    // Spawn daemon!
+    const daemonScript = path.join(__dirname, 'qr-daemon.js');
+    const child = spawn('node', [daemonScript], { detached: true, stdio: 'ignore' });
+    child.unref(); // Detach it so Node can exit cleanly while daemon holds CDP
+
+    // Wait until daemon outputs the QR ready marker, up to 15 seconds
+    let qrPath = null;
+    for (let i = 0; i < 15; i++) {
+        if (fs.existsSync('/tmp/ctrip_qr_ready.txt')) {
+            qrPath = fs.readFileSync('/tmp/ctrip_qr_ready.txt', 'utf8').trim();
+            break;
+        }
+        await waitFor(1000);
+    }
+
+    if (qrPath) {
+        output({
+            success: true,
+            status: 'waiting_scan',
+            message: '请把此二维码发给用户，要求用户用携程 APP 扫码。这是后台守护进程安全生成的。',
+            hint: '【极其重要】收到此状态后，必须立刻用 notify_user 把二维码发给用户！等用户回复“扫好了”之后，再执行 node scripts/login.js --check',
+            qrcode_screenshot: qrPath
+        });
+    } else {
+        output({ success: false, error: '后台生成二维码超时或失败' });
+    }
     return true;
 }
 
@@ -250,7 +233,7 @@ async function main() {
         }
 
         if (mode === '--qrcode') {
-            await qrcodeLogin(page);
+            await qrcodeLogin();
             return;
         }
 
@@ -272,7 +255,7 @@ async function main() {
         }
 
         // Cookie 恢复失败，引导扫码
-        await qrcodeLogin(page);
+        await qrcodeLogin();
 
     } catch (err) {
         outputError(`登录失败: ${err.message}`, { stack: err.stack });
