@@ -39,20 +39,30 @@ async function checkLoginStatus(page) {
         const allCookies = await page.cookies();
         const hasTicket = allCookies.some(c => c.name.toLowerCase().includes('ticket') || c.name === 'DUID');
 
-        // 作为双重保险，也可以查 DOM
-        const loggedInDOM = await page.evaluate(() => {
-            const userEl = document.querySelector('.tl_nme, .lg_bt_username, [class*="avatar"], [class*="username"], [class*="user"], .head-portrait');
-            if (userEl && userEl.textContent.trim() && !userEl.textContent.includes('登录') && !userEl.textContent.includes('注册')) {
-                return userEl.textContent.trim();
-            }
-            return null;
-        });
+        // 作为双重保险，也可以查 DOM（加 try-catch 防止页面正在跳转时报 Execution context destroyed 导致整个函数崩溃）
+        let loggedInDOM = null;
+        try {
+            loggedInDOM = await page.evaluate(() => {
+                const userEl = document.querySelector('.tl_nme, .lg_bt_username, [class*="avatar"], [class*="username"], [class*="user"], .head-portrait');
+                if (userEl && userEl.textContent.trim() && !userEl.textContent.includes('登录') && !userEl.textContent.includes('注册')) {
+                    return userEl.textContent.trim();
+                }
+                return null;
+            });
+        } catch (e) {
+            console.log('[DEBUG] DOM evaluate 失败 (如果是执行上下文销毁可忽略):', e.message);
+        }
 
         if (hasTicket || loggedInDOM) {
             return { loggedIn: true, username: loggedInDOM || 'User_Found_Via_Cookie' };
         }
+
+        // 【致命调试环节】这说明验证又失败了！我们立刻截个图看看究竟为什么！
+        await screenshot(page, 'check_fail_debug');
+
         return { loggedIn: false, error: 'No valid HttpOnly ctickets or user profile elements found' };
     } catch (err) {
+        console.log('[DEBUG] checkLoginStatus 发生致命错误:', err.message);
         return { loggedIn: false, error: err.message };
     }
 }
