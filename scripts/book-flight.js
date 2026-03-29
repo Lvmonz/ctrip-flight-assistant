@@ -3,11 +3,10 @@
  * book-flight.js — 点击预订按钮进入下单页，提取乘机人列表
  *
  * 使用方式:
- *   node book-flight.js --flightNo MU5148 --serviceIndex 0
- *   node book-flight.js --index 2 --serviceIndex 1
+ *   node book-flight.js --from 杭州 --to 北京 --date 2026-03-30 --flightNo MU5148 --serviceIndex 0
+ *   node book-flight.js --from 杭州 --to 北京 --date 2026-03-30 --index 0 --serviceIndex 0
  *
- * 前置: 浏览器需停留在搜索结果页，且目标航班已展开报价面板
- * 输出: 已保存的乘机人列表 JSON
+ * 输出: 下单页面信息 + 已保存的乘机人列表 JSON
  */
 
 const {
@@ -15,14 +14,33 @@ const {
     loadCookies, saveCookies, screenshot, output, outputError,
 } = require('./browser-utils');
 
+const CITY_MAP = {
+    '北京': 'BJS', '上海': 'SHA', '广州': 'CAN', '深圳': 'SZX', '杭州': 'HGH',
+    '成都': 'CTU', '重庆': 'CKG', '武汉': 'WUH', '西安': 'SIA', '南京': 'NKG',
+    '天津': 'TSN', '青岛': 'TAO', '大连': 'DLC', '厦门': 'XMN', '长沙': 'CSX',
+    '昆明': 'KMG', '三亚': 'SYX', '海口': 'HAK', '贵阳': 'KWE', '郑州': 'CGO',
+    '哈尔滨': 'HRB', '沈阳': 'SHE', '拉萨': 'LXA', '乌鲁木齐': 'URC',
+    '香港': 'HKG', '台北': 'TPE', '澳门': 'MFM',
+};
+function resolveCity(input) {
+    if (!input) return null;
+    const upper = input.toUpperCase();
+    if (/^[A-Z]{3}$/.test(upper)) return upper;
+    return CITY_MAP[input] || null;
+}
+
 function parseArgs() {
     const args = process.argv.slice(2);
-    const params = { serviceIndex: 0 };
+    const params = { serviceIndex: 0, cabin: 'economy' };
     for (let i = 0; i < args.length; i++) {
         switch (args[i]) {
             case '--flightNo': params.flightNo = args[++i]; break;
             case '--index': params.index = parseInt(args[++i], 10); break;
             case '--serviceIndex': params.serviceIndex = parseInt(args[++i], 10); break;
+            case '--from': params.from = args[++i]; break;
+            case '--to': params.to = args[++i]; break;
+            case '--date': params.date = args[++i]; break;
+            case '--cabin': params.cabin = args[++i]; break;
         }
     }
     return params;
@@ -37,71 +55,86 @@ async function main() {
         const page = await getPage(browser);
 
         const currentUrl = page.url();
-        if (!currentUrl.includes('flights.ctrip.com')) {
-            outputError('当前页面不是携程页面', { url: currentUrl });
-            process.exit(1);
+
+        // 如果不在搜索列表页，自动导航
+        if (!currentUrl.includes('flights.ctrip.com/online/list/')) {
+            if (!params.from || !params.to || !params.date) {
+                outputError('当前页面不在搜索列表页，需要 --from, --to, --date 参数来导航', { url: currentUrl });
+                process.exit(1);
+            }
+            const fromCode = resolveCity(params.from);
+            const toCode = resolveCity(params.to);
+            if (!fromCode || !toCode) {
+                outputError('无法识别城市');
+                process.exit(1);
+            }
+            const cabinParam = (params.cabin === 'business' || params.cabin === 'first') ? 'c_f' : 'y_s_c_f';
+            const searchUrl = `https://flights.ctrip.com/online/list/oneway-${fromCode}-${toCode}?depdate=${params.date}&cabin=${cabinParam}&adult=1&child=0&infant=0`;
+
+            await loadCookies(page);
+            output({ status: 'navigating', message: '正在导航到搜索页...' });
+            await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+            await waitFor(10000);
         }
 
         await waitFor(2000);
 
-        // 如果还在搜索列表页，先展开报价
-        if (currentUrl.includes('/list/')) {
-            await waitForSelector(page, '.flight-item', 10000);
+        // 在搜索列表页上操作
+        await waitForSelector(page, '.flight-item', 15000);
 
-            // 定位目标航班
-            const targetIndex = await page.evaluate((flightNo, idx) => {
-                const items = document.querySelectorAll('.flight-item');
-                if (idx !== undefined && idx !== null) return idx;
-                for (let i = 0; i < items.length; i++) {
-                    const noEl = items[i].querySelector('.plane-No');
-                    if (noEl && noEl.textContent.includes(flightNo)) return i;
-                }
-                return -1;
-            }, params.flightNo || null, params.index !== undefined ? params.index : null);
-
-            if (targetIndex < 0) {
-                outputError(`未找到目标航班`);
-                process.exit(1);
+        // 定位目标航班
+        const targetIndex = await page.evaluate((flightNo, idx) => {
+            const items = document.querySelectorAll('.flight-item');
+            if (idx !== undefined && idx !== null) return idx;
+            for (let i = 0; i < items.length; i++) {
+                const noEl = items[i].querySelector('.plane-No');
+                if (noEl && noEl.textContent.includes(flightNo)) return i;
             }
+            return -1;
+        }, params.flightNo || null, params.index !== undefined ? params.index : null);
 
-            // 点击"订票"按钮展开（如果还没展开）
-            const isExpanded = await page.evaluate((idx) => {
-                const items = document.querySelectorAll('.flight-item');
-                const item = items[idx];
-                return item && item.querySelectorAll('.domestic-cabin-item').length > 0;
-            }, targetIndex);
+        if (targetIndex < 0) {
+            outputError(`未找到目标航班`);
+            process.exit(1);
+        }
 
-            if (!isExpanded) {
-                const bookBtns = await page.$$('.btn-book');
-                if (bookBtns[targetIndex]) {
-                    await bookBtns[targetIndex].click();
-                    await waitFor(3000);
-                }
+        // 点击"订票"按钮展开（如果还没展开）
+        const isExpanded = await page.evaluate((idx) => {
+            const items = document.querySelectorAll('.flight-item');
+            const item = items[idx];
+            return item && item.querySelectorAll('.domestic-cabin-item').length > 0;
+        }, targetIndex);
+
+        if (!isExpanded) {
+            const bookBtns = await page.$$('.btn-book');
+            if (bookBtns[targetIndex]) {
+                await bookBtns[targetIndex].click();
+                await waitFor(3000);
             }
+        }
 
-            // 点击目标服务的"预订/选购"按钮
-            output({ status: 'booking', message: `正在点击第 ${params.serviceIndex} 个服务的预订按钮...` });
+        // 点击目标服务的"预订/选购"按钮
+        output({ status: 'booking', message: `正在点击第 ${params.serviceIndex} 个服务的预订按钮...` });
 
-            const clicked = await page.evaluate((flightIdx, svcIdx) => {
-                const items = document.querySelectorAll('.flight-item');
-                const item = items[flightIdx];
-                if (!item) return false;
-                // 找到所有"预订"或"选购"按钮（排除"收起"和"订票"）
-                const btns = Array.from(item.querySelectorAll('.btn-book')).filter(b => {
-                    const text = b.textContent.trim();
-                    return text === '预订' || text === '选购';
-                });
-                if (btns[svcIdx]) {
-                    btns[svcIdx].click();
-                    return true;
-                }
-                return false;
-            }, targetIndex, params.serviceIndex);
-
-            if (!clicked) {
-                outputError('未找到预订/选购按钮', { serviceIndex: params.serviceIndex });
-                process.exit(1);
+        const clicked = await page.evaluate((flightIdx, svcIdx) => {
+            const items = document.querySelectorAll('.flight-item');
+            const item = items[flightIdx];
+            if (!item) return false;
+            // 找到所有"预订"或"选购"按钮（排除"收起"和"订票"）
+            const btns = Array.from(item.querySelectorAll('.btn-book')).filter(b => {
+                const text = b.textContent.trim();
+                return text === '预订' || text === '选购';
+            });
+            if (btns[svcIdx]) {
+                btns[svcIdx].click();
+                return true;
             }
+            return false;
+        }, targetIndex, params.serviceIndex);
+
+        if (!clicked) {
+            outputError('未找到预订/选购按钮', { serviceIndex: params.serviceIndex });
+            process.exit(1);
         }
 
         // 等待页面跳转到下单页
