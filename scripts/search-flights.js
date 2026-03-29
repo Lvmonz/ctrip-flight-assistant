@@ -63,6 +63,9 @@ function parseArgs() {
             case '--time': params.time = args[++i]; break;
             case '--airport': params.airport = args[++i]; break;
             case '--largeOnly': params.largeOnly = args[++i] === 'true'; break;
+            case '--airline': params.airline = args[++i]; break;
+            case '--maxPrice': params.maxPrice = parseInt(args[++i], 10); break;
+            case '--sort': params.sort = args[++i]; break; // price | time | duration
         }
     }
 
@@ -216,6 +219,59 @@ async function parseFlightListFallback(page) {
 }
 
 // ============================================================
+//  滚动加载全量航班
+// ============================================================
+
+async function scrollToLoadAll(page) {
+    let previousCount = 0;
+    let stableRounds = 0;
+    const MAX_SCROLLS = 30;
+    const SCROLL_WAIT = 2000;
+
+    for (let i = 0; i < MAX_SCROLLS; i++) {
+        const currentCount = await page.evaluate(() =>
+            document.querySelectorAll('.flight-item').length
+        );
+
+        if (currentCount === previousCount) {
+            stableRounds++;
+            if (stableRounds >= 2) break; // 连续 2 次无新增，认为已全部加载
+        } else {
+            stableRounds = 0;
+        }
+        previousCount = currentCount;
+
+        // 滚动到页面底部
+        await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+        await waitFor(SCROLL_WAIT);
+    }
+
+    // 滚回顶部
+    await page.evaluate(() => window.scrollTo(0, 0));
+    return previousCount;
+}
+
+// ============================================================
+//  价格解析工具
+// ============================================================
+
+function parsePriceNum(priceStr) {
+    if (!priceStr) return Infinity;
+    const m = priceStr.match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : Infinity;
+}
+
+function calcMinutes(dep, arr) {
+    if (!dep || !arr) return Infinity;
+    const [dh, dm] = dep.split(':').map(Number);
+    const arrClean = arr.replace(/\s*\+.*$/, ''); // 去掉 "+1天"
+    const [ah, am] = arrClean.split(':').map(Number);
+    let diff = (ah * 60 + am) - (dh * 60 + dm);
+    if (diff <= 0) diff += 24 * 60; // 跨天
+    return diff;
+}
+
+// ============================================================
 //  主流程
 // ============================================================
 
@@ -269,6 +325,12 @@ async function main() {
         // 等待航班卡片出现
         const hasCards = await waitForSelector(page, '.flight-item', 15000);
 
+        // 滚动加载全量航班
+        if (hasCards) {
+            const totalLoaded = await scrollToLoadAll(page);
+            output({ status: 'loaded', message: `已加载 ${totalLoaded} 条航班，正在解析...` });
+        }
+
         // 截图搜索结果
         const shotResult = await screenshot(page, 'search_result');
 
@@ -302,8 +364,9 @@ async function main() {
             return;
         }
 
-        // 自定义条件过滤
+        // ========== 内存过滤 ==========
         let resultFlights = flights;
+
         if (params.direct) {
             resultFlights = resultFlights.filter(f => f.stops === '直飞' || !f.stops);
         }
@@ -327,6 +390,34 @@ async function main() {
             const largeAircraftRegex = /330|350|777|787|747|380/i;
             resultFlights = resultFlights.filter(f => f.aircraft && largeAircraftRegex.test(f.aircraft));
         }
+        if (params.airline) {
+            resultFlights = resultFlights.filter(f =>
+                f.airline && f.airline.includes(params.airline)
+            );
+        }
+        if (params.maxPrice) {
+            resultFlights = resultFlights.filter(f => parsePriceNum(f.price) <= params.maxPrice);
+        }
+
+        // ========== 排序 ==========
+        if (params.sort) {
+            switch (params.sort) {
+                case 'price':
+                    resultFlights.sort((a, b) => parsePriceNum(a.price) - parsePriceNum(b.price));
+                    break;
+                case 'time':
+                    resultFlights.sort((a, b) => (a.departTime || '').localeCompare(b.departTime || ''));
+                    break;
+                case 'duration':
+                    // 按飞行时长排（到达-出发）
+                    resultFlights.sort((a, b) => {
+                        const dA = calcMinutes(a.departTime, a.arriveTime);
+                        const dB = calcMinutes(b.departTime, b.arriveTime);
+                        return dA - dB;
+                    });
+                    break;
+            }
+        }
 
         // 更新 Cookie（搜索后可能有新的 session cookie）
         await saveCookies(page);
@@ -341,6 +432,9 @@ async function main() {
                 cabin: params.cabin,
                 time: params.time || '不限',
                 airport: params.airport || '不限',
+                airline: params.airline || '不限',
+                maxPrice: params.maxPrice || '不限',
+                sort: params.sort || 'default',
                 largeOnly: params.largeOnly || false,
                 directOnly: params.direct,
             },
