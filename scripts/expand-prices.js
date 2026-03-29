@@ -3,15 +3,18 @@
  * expand-prices.js — 展开航班报价面板，解析服务与定价
  *
  * 使用方式:
- *   node expand-prices.js --flightNo MU5148
- *   node expand-prices.js --index 2
+ *   node expand-prices.js --from 杭州 --to 北京 --date 2026-03-30 --flightNo MU5148
+ *   node expand-prices.js --from 杭州 --to 北京 --date 2026-03-30 --index 0
  *
  * 参数:
+ *   --from      出发城市（中文或三字码）
+ *   --to        到达城市（中文或三字码）
+ *   --date      出发日期 YYYY-MM-DD
+ *   --cabin     舱位（默认 economy）
  *   --flightNo  航班号（如 MU5148）
  *   --index     航班在列表中的序号（从 0 开始）
  *
- * 前置: 浏览器当前需停留在搜索结果列表页
- * 输出: JSON 数组（每个元素为一个服务选项含价格、退改、行李等）
+ * 输出: JSON（航班信息 + 服务选项数组含价格、退改、行李等）
  */
 
 const {
@@ -19,13 +22,33 @@ const {
     loadCookies, saveCookies, screenshot, output, outputError,
 } = require('./browser-utils');
 
+// 城市映射（复用 search-flights.js 的逻辑）
+const CITY_MAP = {
+    '北京': 'BJS', '上海': 'SHA', '广州': 'CAN', '深圳': 'SZX', '杭州': 'HGH',
+    '成都': 'CTU', '重庆': 'CKG', '武汉': 'WUH', '西安': 'SIA', '南京': 'NKG',
+    '天津': 'TSN', '青岛': 'TAO', '大连': 'DLC', '厦门': 'XMN', '长沙': 'CSX',
+    '昆明': 'KMG', '三亚': 'SYX', '海口': 'HAK', '贵阳': 'KWE', '郑州': 'CGO',
+    '哈尔滨': 'HRB', '沈阳': 'SHE', '拉萨': 'LXA', '乌鲁木齐': 'URC',
+    '香港': 'HKG', '台北': 'TPE', '澳门': 'MFM',
+};
+function resolveCity(input) {
+    if (!input) return null;
+    const upper = input.toUpperCase();
+    if (/^[A-Z]{3}$/.test(upper)) return upper;
+    return CITY_MAP[input] || null;
+}
+
 function parseArgs() {
     const args = process.argv.slice(2);
-    const params = {};
+    const params = { cabin: 'economy' };
     for (let i = 0; i < args.length; i++) {
         switch (args[i]) {
             case '--flightNo': params.flightNo = args[++i]; break;
             case '--index': params.index = parseInt(args[++i], 10); break;
+            case '--from': params.from = args[++i]; break;
+            case '--to': params.to = args[++i]; break;
+            case '--date': params.date = args[++i]; break;
+            case '--cabin': params.cabin = args[++i]; break;
         }
     }
     return params;
@@ -35,7 +58,7 @@ async function main() {
     const params = parseArgs();
 
     if (params.flightNo === undefined && params.index === undefined) {
-        outputError('缺少参数', { usage: 'node expand-prices.js --flightNo MU5148 或 --index 0' });
+        outputError('缺少参数', { usage: 'node expand-prices.js --from 杭州 --to 北京 --date 2026-03-30 --flightNo MU5148 或 --index 0' });
         process.exit(1);
     }
 
@@ -44,15 +67,30 @@ async function main() {
         browser = await connectBrowser();
         const page = await getPage(browser);
 
-        // 确认当前页面是搜索结果页
+        // 如果不在搜索页，自动导航
         const currentUrl = page.url();
-        if (!currentUrl.includes('flights.ctrip.com')) {
-            outputError('当前页面不是携程航班搜索页', { url: currentUrl });
-            process.exit(1);
+        if (!currentUrl.includes('flights.ctrip.com/online/list/')) {
+            if (!params.from || !params.to || !params.date) {
+                outputError('当前页面不是搜索结果页，需要 --from, --to, --date 参数来导航', { url: currentUrl });
+                process.exit(1);
+            }
+            const fromCode = resolveCity(params.from);
+            const toCode = resolveCity(params.to);
+            if (!fromCode || !toCode) {
+                outputError('无法识别城市');
+                process.exit(1);
+            }
+            const cabinParam = (params.cabin === 'business' || params.cabin === 'first') ? 'c_f' : 'y_s_c_f';
+            const searchUrl = `https://flights.ctrip.com/online/list/oneway-${fromCode}-${toCode}?depdate=${params.date}&cabin=${cabinParam}&adult=1&child=0&infant=0`;
+
+            await loadCookies(page);
+            output({ status: 'navigating', message: `正在导航到搜索页...` });
+            await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+            await waitFor(10000);
         }
 
         // 等待航班卡片
-        await waitForSelector(page, '.flight-item', 10000);
+        await waitForSelector(page, '.flight-item', 15000);
 
         // 定位目标航班
         const targetIndex = await page.evaluate((flightNo, idx) => {
