@@ -96,74 +96,16 @@ async function qrcodeLogin(page) {
     // 4. 截图二维码
     const shotQR = await screenshot(page, 'qrcode');
 
-    // 5. 等待用户扫码（轮询检查，最多 120 秒）
+    // 5. 立即返回二维码给 Agent，不阻塞进程
     output({
         success: true,
         status: 'waiting_scan',
-        message: '请打开携程 APP 扫码登录',
+        message: '请把此二维码发给用户，要求用户用携程 APP 扫码。',
+        hint: '【极其重要】收到此状态后，必须立刻用 notify_user 工具把二维码发送给用户！等用户回复“扫好了”之后，再执行 node scripts/login.js --check',
         qrcode_screenshot: shotQR,
         login_page_screenshot: shotBefore,
-        timeout: 120,
     });
-
-    const startTime = Date.now();
-    const SCAN_TIMEOUT = 120000; // 2 分钟
-
-    while (Date.now() - startTime < SCAN_TIMEOUT) {
-        await waitFor(3000);
-
-        // 检查是否已跳转到首页（扫码成功后会自动跳转）
-        const currentUrl = page.url();
-        if (!currentUrl.includes('passport.ctrip.com') && !currentUrl.includes('login')) {
-            // 登录成功
-            const cookies = await saveCookies(page);
-            const status = await checkLoginStatus(page);
-            saveAuthState({
-                loggedIn: true,
-                username: status.username,
-                loginMethod: 'qrcode',
-                loginTime: new Date().toISOString(),
-            });
-
-            output({
-                success: true,
-                status: 'logged_in',
-                username: status.username,
-                cookies: cookies,
-            });
-            return true;
-        }
-
-        // 检查页面上是否显示了"已扫码"状态
-        const scanState = await page.evaluate(() => {
-            const body = document.body.innerText;
-            if (body.includes('已扫码') || body.includes('确认登录')) {
-                return 'scanned';
-            }
-            if (body.includes('二维码已过期') || body.includes('刷新')) {
-                return 'expired';
-            }
-            return 'waiting';
-        });
-
-        if (scanState === 'expired') {
-            // 刷新二维码
-            await page.reload({ waitUntil: 'domcontentloaded' });
-            await waitFor(2000);
-            const newShot = await screenshot(page, 'qrcode_refresh');
-            output({
-                success: true,
-                status: 'qr_refreshed',
-                message: '二维码已过期，已刷新，请重新扫码',
-                qrcode_screenshot: newShot,
-            });
-        }
-    }
-
-    // 超时
-    const shotTimeout = await screenshot(page, 'login_timeout');
-    outputError('扫码登录超时（2分钟）', { screenshot: shotTimeout });
-    return false;
+    return true;
 }
 
 // ============================================================
@@ -225,10 +167,25 @@ async function main() {
         const page = await getPage(browser);
 
         if (mode === '--check') {
-            // 仅检查状态
+            // 首先直接检查当前浏览器页面原生状态 (不覆盖 Cookie)
+            let status = await checkLoginStatus(page);
+            if (status.loggedIn) {
+                // 如果发现已登录 (比如用户刚刚扫码完成)，立即抓取 Cookie 存起来
+                const cookies = await saveCookies(page);
+                saveAuthState({
+                    loggedIn: true,
+                    username: status.username,
+                    loginMethod: 'qrcode_or_native',
+                    loginTime: new Date().toISOString(),
+                });
+                output({ success: true, status: 'logged_in', username: status.username, cookies, method: 'native' });
+                return;
+            }
+
+            // 如果原生未登录，尝试从文件恢复 Cookie
             const restoreResult = await tryRestoreSession(page);
             if (restoreResult.restored) {
-                output({ success: true, status: 'logged_in', username: restoreResult.username });
+                output({ success: true, status: 'logged_in', username: restoreResult.username, method: 'restored' });
             } else {
                 const auth = loadAuthState();
                 output({
