@@ -3,3 +3,13 @@ dist/
 .env
 *.log
 .DS_Store
+
+# Debug scripts
+debug-*.js
+test-*.js
+
+# Agent states
+*_cookies.json
+*_auth.json
+.auth/
+
