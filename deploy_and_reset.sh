@@ -43,6 +43,7 @@ if [ -n "$CONTAINER_NAME" ]; then
                /home/node/.openclaw/workspace/ctrip_cookies.json \
                /home/node/.openclaw/workspace/.auth \
                /tmp/openclaw/* \
+               /home/node/.openclaw/agents/main/sessions/* \
                2>/dev/null || true
     "
     echo "✅ OpenClaw 核心容器记忆与日志清空完成。"
