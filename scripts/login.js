@@ -35,9 +35,10 @@ async function checkLoginStatus(page) {
         await waitFor(2000);
 
         // 检查是否有用户头像/昵称（已登录标志）
-        // 使用 Puppeteer 原生获取 Cookie（这是唯一能跨越 HttpOnly 限制的方法）
-        const allCookies = await page.cookies();
-        const hasTicket = allCookies.some(c => c.name.toLowerCase().includes('ticket') || c.name === 'DUID');
+        // 使用底层 CDP 获取全局全域 Cookie（无视当前域名限制和 HttpOnly 限制）
+        const client = await page.target().createCDPSession();
+        const { cookies } = await client.send('Network.getAllCookies');
+        const hasTicket = cookies.some(c => c.name.toLowerCase().includes('ticket') || c.name === 'DUID');
 
         // 作为双重保险，也可以查 DOM（加 try-catch 防止页面正在跳转时报 Execution context destroyed 导致整个函数崩溃）
         let loggedInDOM = null;

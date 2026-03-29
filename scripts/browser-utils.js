@@ -79,7 +79,8 @@ async function waitForSelector(page, selector, timeout = 15000) {
 
 async function saveCookies(page) {
     try {
-        const cookies = await page.cookies();
+        const client = await page.target().createCDPSession();
+        const { cookies } = await client.send('Network.getAllCookies');
         const dir = path.dirname(COOKIE_PATH);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(COOKIE_PATH, JSON.stringify(cookies, null, 2));
@@ -96,17 +97,11 @@ async function loadCookies(page) {
         }
         const raw = fs.readFileSync(COOKIE_PATH, 'utf-8');
         const cookies = JSON.parse(raw);
-        // 跨域 cookie 设置可能失败，逐条 try-catch
-        let loaded = 0;
-        for (const cookie of cookies) {
-            try {
-                await page.setCookie(cookie);
-                loaded++;
-            } catch {
-                // 忽略跨域失败
-            }
-        }
-        return { success: true, loaded, total: cookies.length };
+
+        const client = await page.target().createCDPSession();
+        await client.send('Network.setCookies', { cookies: cookies });
+
+        return { success: true, loaded: cookies.length, total: cookies.length };
     } catch (err) {
         return { success: false, error: err.message };
     }
