@@ -26,7 +26,12 @@ const LOGIN_CHECK_TIMEOUT = 10000;
 
 async function checkLoginStatus(page) {
     try {
-        await page.goto(CTRIP_HOME, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        // 安全地刷新状态。用短 timeout 避免遇广告卡死，哪怕 timeout 也强行继续查 DOM
+        try {
+            await page.goto(CTRIP_HOME, { waitUntil: 'domcontentloaded', timeout: 10000 });
+        } catch (e) {
+            // timeout 后直接忽略，因为可能页面其实已经加载出来了
+        }
         await waitFor(2000);
 
         // 检查是否有用户头像/昵称（已登录标志）
@@ -185,8 +190,17 @@ async function main() {
         const page = await getPage(browser);
 
         if (mode === '--check') {
-            // 给扫码后网页自行处理跨域 SSO 握手留一点时间，防止刚扫完就被立即的 goto 强制打断
-            await waitFor(4000);
+            // 给扫码后网页自行处理跨域 SSO 握手留一点时间
+            // 循环检测当前 URL 是否已经脱离登录页，最多等 10 秒
+            for (let i = 0; i < 10; i++) {
+                const currentUrl = page.url();
+                if (!currentUrl.includes('passport.ctrip.com/user/login')) {
+                    // URL 已经发生变化，说明携程开始自动跳转了！
+                    await waitFor(3000); // 给彻底写入 SSO 跨域 Cookies 留时间
+                    break;
+                }
+                await waitFor(1000);
+            }
 
             // 首先直接检查当前浏览器页面原生状态 (不覆盖 Cookie)
             let status = await checkLoginStatus(page);
