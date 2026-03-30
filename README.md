@@ -1,13 +1,45 @@
 # 携程机票助手 🛫
 
-OpenClaw Skill — 通过浏览器自动化操控携程，实现账号登录和航班搜索。
+OpenClaw Skill — 通过浏览器自动化操控携程网站，实现从登录、搜索、推荐到下单支付的**全流程闭环**。
 
 ## 功能
 
-| 工具 | 说明 | 命令 |
+| 流程 | 脚本 | 说明 |
 |------|------|------|
-| 登录 | Cookie 恢复 / 扫码 / 手机号 | `node scripts/login.js` |
-| 搜索 | 国内航班查询 + 结果解析 | `node scripts/search-flights.js --from 杭州 --to 北京 --date 2026-04-05` |
+| 🔐 登录 | `login.js` | Cookie 恢复 / 扫码登录 |
+| 🔍 搜索 | `search-flights.js` | 全量航班抓取（自动滚动加载）+ 内存过滤排序 |
+| 💰 展开报价 | `expand-prices.js` | 展开指定航班的服务选项、价格、退改规则 |
+| ✈️ 预订跳转 | `book-flight.js` | 点击预订进入下单页，提取乘机人列表 |
+| 👤 选择乘机人 | `select-passenger.js` | 勾选已有乘机人或新增乘机人信息 |
+| 📋 确认订单 | `confirm-order.js` | 勾选购票须知、点击去支付、处理保险弹窗 |
+
+### 搜索参数
+
+```bash
+node scripts/search-flights.js \
+  --from 杭州 --to 北京 --date 2026-04-05 \
+  --cabin economy \
+  --direct \
+  --time "早上" \
+  --airport "首都" \
+  --largeOnly true \
+  --airline "国航" \
+  --maxPrice 1000 \
+  --sort price
+```
+
+| 参数 | 说明 | 可选值 |
+|------|------|--------|
+| `--from` / `--to` | 出发/到达城市 | 中文名或 IATA 三字码 |
+| `--date` | 出发日期 | YYYY-MM-DD |
+| `--cabin` | 舱位 | `economy` / `business` / `first` |
+| `--direct` | 仅直飞 | 无需值，加上即生效 |
+| `--time` | 起飞时段 | `早上` / `中午` / `晚上` |
+| `--airport` | 到达机场 | 机场简称（如 `首都`、`大兴`） |
+| `--largeOnly` | 仅宽体机 | `true` |
+| `--airline` | 航司过滤 | 航司名称 |
+| `--maxPrice` | 最高票价 | 数字 |
+| `--sort` | 排序方式 | `price` / `time` / `duration` |
 
 ## 安装
 
@@ -116,15 +148,27 @@ google-chrome --remote-debugging-port=9222
 
 ```
 ctrip-flight/
-├── SKILL.md               # Agent 指令（触发条件 + 工作流）
+├── SKILL.md                    # Agent 指令（7 个业务流程 + 推荐逻辑）
 ├── package.json
+├── deploy_and_reset.sh         # 一键部署：git push + 容器同步 + 重启
 ├── scripts/
-│   ├── browser-utils.js   # CDP 连接、Cookie 管理、截图
-│   ├── login.js           # 登录（Cookie恢复/扫码/手机号）
-│   └── search-flights.js  # 航班搜索 + 解析
+│   ├── browser-utils.js        # CDP 连接、Cookie 管理、截图工具
+│   ├── login.js                # 登录（Cookie 恢复 / 扫码）
+│   ├── search-flights.js       # 航班搜索（自动滚动加载 + 过滤排序）
+│   ├── expand-prices.js        # 展开报价面板（服务/定价/退改解析）
+│   ├── book-flight.js          # 预订跳转（进入下单页 + 乘机人列表）
+│   ├── select-passenger.js     # 选择/新增乘机人
+│   └── confirm-order.js        # 确认订单 + 去支付
 └── references/
-    └── env-spec.md        # 环境约束文档
+    └── env-spec.md             # 环境约束文档
 ```
+
+## 技术细节
+
+- **反检测滚动**：使用 `page.mouse.wheel()` + `page.mouse.move()` 模拟真人滚动，绕过携程对 `window.scrollTo()` 的拦截
+- **URL 参数策略**：搜索 URL 只保留核心参数（路线+日期+舱位），避免触发反爬风控
+- **单会话链式执行**：下单流程（展开报价→预订→填写乘机人→支付）在同一个浏览器 tab 中链式完成，避免状态丢失
+- **Cookie 持久化**：登录态保存在 `/home/node/.openclaw/workspace/ctrip_cookies.json`，跨会话复用
 
 ## License
 
