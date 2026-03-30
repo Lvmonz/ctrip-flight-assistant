@@ -54,6 +54,24 @@ function parseArgs() {
     return params;
 }
 
+// ============================================================
+//  滚动加载全量航班（与 search-flights.js 保持一致）
+// ============================================================
+async function scrollToLoadAll(page) {
+    await page.mouse.move(150, 200);
+    await page.mouse.click(150, 200);
+    for (let i = 0; i < 30; i++) {
+        await page.mouse.wheel({ deltaY: 500 });
+        await page.mouse.move(100 + Math.random() * 100, 100 + Math.random() * 100);
+        await waitFor(500);
+    }
+    await waitFor(3000);
+    const count = await page.evaluate(() => document.querySelectorAll('.flight-item').length);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await waitFor(500);
+    return count;
+}
+
 async function main() {
     const params = parseArgs();
 
@@ -81,16 +99,20 @@ async function main() {
                 process.exit(1);
             }
             const cabinParam = (params.cabin === 'business' || params.cabin === 'first') ? 'c_f' : 'y_s_c_f';
-            const searchUrl = `https://flights.ctrip.com/online/list/oneway-${fromCode}-${toCode}?depdate=${params.date}&cabin=${cabinParam}&adult=1&child=0&infant=0`;
+            const searchUrl = `https://flights.ctrip.com/online/list/oneway-${fromCode}-${toCode}?depdate=${params.date}&cabin=${cabinParam}`;
 
             await loadCookies(page);
             output({ status: 'navigating', message: `正在导航到搜索页...` });
             await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 45000 });
-            await waitFor(10000);
+            await waitFor(8000);
         }
 
         // 等待航班卡片
         await waitForSelector(page, '.flight-item', 15000);
+
+        // 滚动加载全量航班（关键！不滚动只有前 15 条）
+        const totalLoaded = await scrollToLoadAll(page);
+        output({ status: 'loaded', message: `已加载 ${totalLoaded} 条航班` });
 
         // 定位目标航班
         const targetIndex = await page.evaluate((flightNo, idx) => {
@@ -109,6 +131,13 @@ async function main() {
             process.exit(1);
         }
 
+        // 滚动到目标航班使其可见（必须！否则 click 无效）
+        await page.evaluate((idx) => {
+            const items = document.querySelectorAll('.flight-item');
+            items[idx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }, targetIndex);
+        await waitFor(1000);
+
         // 获取目标航班基本信息
         const flightInfo = await page.evaluate((idx) => {
             const items = document.querySelectorAll('.flight-item');
@@ -126,16 +155,24 @@ async function main() {
             };
         }, targetIndex);
 
-        // 点击"订票"按钮展开
-        const bookBtns = await page.$$('.btn-book');
-        if (!bookBtns[targetIndex]) {
-            outputError('找不到订票按钮', { index: targetIndex });
+        output({ status: 'expanding', message: `正在展开 ${flightInfo?.flightNo || ''} ${flightInfo?.airline || ''} 的报价...` });
+
+        // 点击目标航班内部的"订票"按钮（使用 per-item querySelector 而非全局索引！）
+        const clickResult = await page.evaluate((idx) => {
+            const items = document.querySelectorAll('.flight-item');
+            const item = items[idx];
+            if (!item) return 'no_item';
+            const btn = item.querySelector('.btn-book');
+            if (!btn) return 'no_btn';
+            btn.click();
+            return 'clicked';
+        }, targetIndex);
+
+        if (clickResult !== 'clicked') {
+            outputError('找不到订票按钮', { index: targetIndex, result: clickResult });
             process.exit(1);
         }
 
-        output({ status: 'expanding', message: `正在展开 ${flightInfo.flightNo} ${flightInfo.airline} 的报价...` });
-
-        await bookBtns[targetIndex].click();
         await waitFor(3000);
 
         // 截图展开后的面板
@@ -149,38 +186,34 @@ async function main() {
 
             const results = [];
 
-            // 查找所有 seat-price 行
-            // 展开后的结构：flight-item 内有多个 service/cabin 行
-            // 每行包含: cabin class + rules + price + 预订按钮
-            const allText = item.innerText;
-            const lines = allText.split('\n').filter(l => l.trim());
-
-            // 更可靠的方法：直接找所有 domestic-cabin-item 和对应的 seat-price
+            // 展开后的 DOM 结构:
+            //   .flight-seats
+            //     .seat-row
+            //       .domestic-cabin-item → 舱位折扣
+            //       .seat-price → 价格
+            //       .rules → 退改/行李
+            //       .servicePackage → 服务包内容
             const cabinItems = item.querySelectorAll('.domestic-cabin-item');
             const seatPrices = item.querySelectorAll('.seat-price');
             const rulesEls = item.querySelectorAll('.rules');
 
-            for (let i = 0; i < cabinItems.length; i++) {
-                const cabin = cabinItems[i]?.innerText?.trim() || '';
+            for (let i = 0; i < Math.max(cabinItems.length, seatPrices.length); i++) {
+                const cabin = cabinItems[i]?.textContent?.trim() || '';
                 const priceEl = seatPrices[i];
                 const rulesEl = rulesEls[i];
 
                 let price = '';
                 let servicePack = '';
                 if (priceEl) {
-                    // 主价格
-                    const mainPrice = priceEl.querySelector('.price');
-                    const subPrice = priceEl.querySelector('.sub-price-item');
-                    price = mainPrice?.textContent?.replace(/[^\d¥]/g, '').trim() || priceEl.textContent?.trim() || '';
-                    servicePack = subPrice?.textContent?.trim() || '';
+                    price = priceEl.textContent?.trim() || '';
                 }
 
                 const rules = rulesEl?.textContent?.trim() || '';
 
-                // 找到对应的按钮（预订/选购）
-                // 每个 cabin section 通常有自己的预订按钮
-                const btnParent = cabinItems[i]?.closest('.flight-item');
-                const btns = btnParent?.querySelectorAll('.btn-book') || [];
+                // 找到对应 seat-row 中的 servicePackage
+                const seatRow = cabinItems[i]?.closest('.seat-row') || seatPrices[i]?.closest('.seat-row');
+                const serviceEl = seatRow?.querySelector('.servicePackage');
+                servicePack = serviceEl?.textContent?.trim() || '';
 
                 results.push({
                     index: i,
@@ -223,3 +256,4 @@ async function main() {
 }
 
 main();
+

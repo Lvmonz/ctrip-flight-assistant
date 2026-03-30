@@ -74,13 +74,23 @@ async function main() {
             await loadCookies(page);
             output({ status: 'navigating', message: '正在导航到搜索页...' });
             await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 45000 });
-            await waitFor(10000);
+            await waitFor(8000);
         }
 
-        await waitFor(2000);
-
-        // 在搜索列表页上操作
+        // 等待航班卡片
         await waitForSelector(page, '.flight-item', 15000);
+
+        // 滚动加载全量航班
+        await page.mouse.move(150, 200);
+        await page.mouse.click(150, 200);
+        for (let scrollI = 0; scrollI < 30; scrollI++) {
+            await page.mouse.wheel({ deltaY: 500 });
+            await page.mouse.move(100 + Math.random() * 100, 100 + Math.random() * 100);
+            await waitFor(500);
+        }
+        await waitFor(3000);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await waitFor(500);
 
         // 定位目标航班
         const targetIndex = await page.evaluate((flightNo, idx) => {
@@ -98,6 +108,13 @@ async function main() {
             process.exit(1);
         }
 
+        // 滚动到目标航班使其可见
+        await page.evaluate((idx) => {
+            const items = document.querySelectorAll('.flight-item');
+            items[idx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }, targetIndex);
+        await waitFor(1000);
+
         // 点击"订票"按钮展开（如果还没展开）
         const isExpanded = await page.evaluate((idx) => {
             const items = document.querySelectorAll('.flight-item');
@@ -106,11 +123,13 @@ async function main() {
         }, targetIndex);
 
         if (!isExpanded) {
-            const bookBtns = await page.$$('.btn-book');
-            if (bookBtns[targetIndex]) {
-                await bookBtns[targetIndex].click();
-                await waitFor(3000);
-            }
+            await page.evaluate((idx) => {
+                const items = document.querySelectorAll('.flight-item');
+                const item = items[idx];
+                const btn = item?.querySelector('.btn-book');
+                if (btn) btn.click();
+            }, targetIndex);
+            await waitFor(3000);
         }
 
         // 点击目标服务的"预订/选购"按钮
