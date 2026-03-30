@@ -374,9 +374,9 @@ async function main() {
             resultFlights = resultFlights.filter(f => {
                 if (!f.departTime) return true;
                 const hour = parseInt(f.departTime.split(':')[0], 10);
-                if (params.time.includes('早') && hour < 12) return true;
-                if (params.time.includes('中') && hour >= 10 && hour <= 15) return true;
-                if (params.time.includes('晚') && hour > 15) return true;
+                if (params.time.includes('早') && hour >= 6 && hour < 12) return true;
+                if (params.time.includes('中') && hour >= 12 && hour < 18) return true;
+                if (params.time.includes('晚') && hour >= 18 && hour < 24) return true;
                 return false;
             });
         }

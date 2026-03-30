@@ -139,10 +139,10 @@ async function main() {
             const items = document.querySelectorAll('.flight-item');
             const item = items[flightIdx];
             if (!item) return false;
-            // 找到所有"预订"或"选购"按钮（排除"收起"和"订票"）
+            // 找到所有"预订"或"选购"或"抢订"按钮（排除"收起"和"订票"）
             const btns = Array.from(item.querySelectorAll('.btn-book')).filter(b => {
                 const text = b.textContent.trim();
-                return text === '预订' || text === '选购';
+                return text.includes('预订') || text.includes('选购') || text.includes('抢订');
             });
             if (btns[svcIdx]) {
                 btns[svcIdx].click();
