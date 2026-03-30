@@ -11,29 +11,36 @@ async function daemon() {
     try {
         browser = await connectBrowser();
         const page = await getPage(browser);
-        await page.goto(CTRIP_LOGIN, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await waitFor(2000);
+        await page.goto(CTRIP_LOGIN, { waitUntil: 'networkidle2', timeout: 30000 });
+        await waitFor(3000);
 
-        // Click QR tab
+        // Click QR tab — the actual selector is `.login-code a`
         await page.evaluate(() => {
-            const tabs = document.querySelectorAll('.tab-list li, .login-tab-item, .login-code a, [class*="qrcode"], [class*="scan"]');
-            for (const tab of tabs) {
-                if (tab.textContent.includes('扫码') || tab.textContent.includes('二维码')) {
-                    tab.click(); return;
-                }
+            // Primary: the known working selector
+            const link = document.querySelector('.login-code a');
+            if (link && link.textContent.includes('扫码')) {
+                link.click(); return;
             }
-            const allLinks = document.querySelectorAll('a, div, button, span');
-            for (const el of allLinks) {
-                if (el.textContent.trim() === '扫码登录' || el.textContent.trim() === '二维码登录') {
+            // Fallback: search for any element with "扫码登录" text
+            const allEls = document.querySelectorAll('a, div, button, span');
+            for (const el of allEls) {
+                const text = el.textContent.trim();
+                if (text === '扫码登录' || text === '二维码登录') {
                     el.click(); return;
                 }
             }
         });
-        await waitFor(2000);
+        await waitFor(5000); // QR code renders as <canvas>, needs time
 
-        // Screenshot QR code box
+        // Verify QR canvas exists
+        const hasQR = await page.evaluate(() => {
+            const canvas = document.querySelector('.qrcode-box canvas, [data-testid="qrCodeBox"] canvas');
+            return canvas ? { w: canvas.width, h: canvas.height } : null;
+        });
+
+        // Screenshot the login box (contains QR code + instructions)
         const filepath = `/tmp/ctrip_qrcode_daemon_${Date.now()}.png`;
-        const box = await page.$('.lg_loginwrap, .login-box, .content-box');
+        const box = await page.$('#bbz_accounts_pc_lg_box') || await page.$('.lg_loginwrap');
         if (box) await box.screenshot({ path: filepath });
         else await screenshot(page, 'qrcode_daemon');
 
