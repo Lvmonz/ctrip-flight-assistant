@@ -29,6 +29,12 @@ if [ -n "$CONTAINER_NAME" ]; then
     else
         echo "⚠️ 未在容器 $CONTAINER_NAME 内找到 skills 目录"
     fi
+
+    # 同步 SOUL.md 到 workspace 目录（系统级指令，优先级高于 SKILL.md）
+    if [ -f "SOUL.md" ]; then
+        docker cp SOUL.md "$CONTAINER_NAME:/home/node/.openclaw/workspace/SOUL.md"
+        echo "✅ SOUL.md 已同步至 workspace"
+    fi
 else
     echo "⚠️ 未找到正在运行的 OpenClaw 核心容器"
 fi
@@ -37,13 +43,34 @@ fi
 echo "🧹 [3/4] 正在清空 OpenClaw 状态和记忆..."
 if [ -n "$CONTAINER_NAME" ]; then
     docker exec "$CONTAINER_NAME" sh -c "
+        # 清空会话历史（对话记录）
+        rm -rf /home/node/.openclaw/agents/main/sessions/*.jsonl \
+               /home/node/.openclaw/agents/main/sessions/*.jsonl.reset.* \
+               2>/dev/null || true
+
+        # 重置 sessions.json 路由映射（防止残留的 session 元数据）
+        echo '{}' > /home/node/.openclaw/agents/main/sessions/sessions.json
+
+        # 清空 memory / 记忆
         rm -rf /home/node/.openclaw/workspace/memory/* \
                /home/node/.openclaw/workspace/MEMORY.md \
-               /home/node/.openclaw/logs/* \
-               /home/node/.openclaw/workspace/ctrip_cookies.json \
+               2>/dev/null || true
+
+        # 清空日志
+        rm -rf /home/node/.openclaw/logs/* \
+               2>/dev/null || true
+
+        # 清空携程登录态
+        rm -rf /home/node/.openclaw/workspace/ctrip_cookies.json \
                /home/node/.openclaw/workspace/.auth \
-               /tmp/openclaw/* \
-               /home/node/.openclaw/agents/main/sessions/* \
+               2>/dev/null || true
+
+        # 清空微信 context-tokens 缓存（防止 LLM 提供商的 prompt cache 残留）
+        rm -f /home/node/.openclaw/openclaw-weixin/accounts/*context-tokens* \
+              2>/dev/null || true
+
+        # 清空临时文件
+        rm -rf /tmp/openclaw/* /tmp/ctrip_* \
                2>/dev/null || true
     "
     echo "✅ OpenClaw 核心容器记忆与日志清空完成。"
